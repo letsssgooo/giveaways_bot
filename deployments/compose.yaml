@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:18.6
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-giveaways}
+      POSTGRES_USER: ${POSTGRES_USER:-giveaways}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  flyway:
+    image: flyway/flyway:13.11.1
+    platform: linux/amd64
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-giveaways}
+      FLYWAY_USER: ${POSTGRES_USER:-giveaways}
+      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      FLYWAY_LOCATIONS: filesystem:/flyway/sql
+      FLYWAY_CLEAN_DISABLED: "true"
+      FLYWAY_VALIDATE_MIGRATION_NAMING: "true"
+      FLYWAY_CONNECT_RETRIES: "10"
+    volumes:
+      - ../migrations:/flyway/sql:ro
+    command: migrate
+
+  bot:
+    image: giveaways-bot:local
+    stop_grace_period: ${BOT_STOP_GRACE_PERIOD:-60s}
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+      args:
+        GO_VERSION: ${GO_VERSION:-1.26.5}
+    env_file:
+      - path: ${BOT_ENV_FILE:-../.env}
+        required: false
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
